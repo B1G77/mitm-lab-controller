@@ -1,0 +1,30 @@
+# Runtime artifacts
+/tmp/
+*.pcap
+*.pcapng
+*.log
+*.leases
+
+# GeoIP database (downloaded per machine, large, regenerable)
+geoip/*.mmdb
+geoip/*.mmdb.gz
+
+# Bundled JS libs (downloaded per machine via web/fetch_libs.sh)
+web/static/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Tooling scratch (not part of the project)
+.claude-flow/
+.claude/
+.firecrawl/

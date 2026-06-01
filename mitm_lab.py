@@ -8,6 +8,7 @@ test. Intended for studying and explaining man-in-the-middle attacks.
 
 from __future__ import annotations
 
+from collections import Counter
 import ipaddress
 import os
 import queue
@@ -67,6 +68,33 @@ INTEL_RULES = [
       "aaplimg", "1e100"]),
 ]
 
+# Domain fingerprints used to guess a device's OS/vendor. Phones randomize
+# their MAC, so the hostnames they contact are a more reliable signal than OUI.
+OS_FINGERPRINTS = [
+    ("Apple (iPhone / iPad / Mac)",
+     ["apple.com", "icloud", "aaplimg", "itunes", "mzstatic", "push.apple",
+      "cdn-apple", "apps.apple"]),
+    ("Android / Google",
+     ["android.clients.google", "android.googleapis", "gvt1", "play.googleapis",
+      "googleusercontent", "dl.google", "connectivitycheck.gstatic"]),
+    ("Samsung", ["samsung", "samsungcloud", "samsungqbe"]),
+    ("Windows", ["windowsupdate", "msftncsi", "msftconnecttest", "microsoft.com"]),
+]
+
+# App fingerprints: which apps a device is running, inferred from hostnames.
+APP_FINGERPRINTS = [
+    ("Spotify", ["spotify", "scdn"]),
+    ("Discord", ["discord"]),
+    ("YouTube", ["youtube", "googlevideo"]),
+    ("Instagram", ["instagram", "cdninstagram"]),
+    ("WhatsApp", ["whatsapp"]),
+    ("TikTok", ["tiktok", "byteoversea", "musical.ly"]),
+    ("Netflix", ["netflix", "nflxvideo"]),
+    ("Snapchat", ["snapchat", "sc-cdn"]),
+    ("Facebook", ["facebook", "fbcdn"]),
+    ("Twitch", ["twitch", "ttvnw"]),
+]
+
 
 class CommandError(RuntimeError):
     pass
@@ -78,6 +106,21 @@ class Station:
     ip: str
     signal: int | None
     hostname: str
+
+
+class DeviceProfile:
+    """Behavioural profile built up from one device's metadata stream."""
+
+    def __init__(self, ip: str) -> None:
+        self.ip = ip
+        self.mac = ""
+        self.os = ""
+        self.apps: set[str] = set()
+        self.domains: set[str] = set()
+        self.cats: Counter = Counter()
+        self.logins: dict[str, str] = {}   # auth domain -> last-seen time
+        self.first = ""
+        self.last = ""
 
 
 @dataclass
@@ -327,6 +370,24 @@ class LabManager:
         self.log(f"Launched Bettercap MITM session on {iface} (targets {net})")
         self.log(f"Bettercap packets saving to {sniff_out}")
 
+    def open_ops_dashboard(self, iface: str) -> None:
+        # Launch the web Ops Dashboard server and open it in a browser. ops_server
+        # auto-falls back to its demo feed if pyshark/tshark aren't available.
+        server = Path(__file__).resolve().parent / "ops_server.py"
+        if not server.exists():
+            raise CommandError("ops_server.py not found next to mitm_lab.py")
+        subprocess.Popen(["python3", str(server), "--iface", iface],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1.5)
+        for opener in (["xdg-open", "http://127.0.0.1:8777/"],
+                       ["sensible-browser", "http://127.0.0.1:8777/"]):
+            try:
+                subprocess.Popen(opener, stderr=subprocess.DEVNULL)
+                break
+            except FileNotFoundError:
+                continue
+        self.log("Launched Ops Dashboard → http://127.0.0.1:8777/")
+
 
 class LabGUI:
     REFRESH_MS = 4000  # client table auto-refresh interval
@@ -344,6 +405,9 @@ class LabGUI:
         self.intel_seen: dict[str, tuple] = {}   # "TYPE:domain" -> (item_id, hits)
         self.capturing = False
         self._intel_cap = None
+        self.profiles: dict[str, DeviceProfile] = {}   # ip -> profile
+        self.prof_seen: dict[str, str] = {}            # ip -> tree item id
+        self._ip_mac: dict[str, str] = {}              # ip -> mac (from leases)
 
         root.title("MITM Lab Controller")
         root.geometry("1040x820")
@@ -478,6 +542,9 @@ class LabGUI:
                                                 self.vars["ap_iface"].get(),
                                                 self.vars["ap_ip"].get(),
                                                 self.vars["cidr"].get())).pack(side="left", padx=4)
+        ttk.Button(tools, text="🌐 Ops Dashboard", style="Go.TButton",
+                   command=lambda: self._launch(self.manager.open_ops_dashboard,
+                                                self.vars["ap_iface"].get())).pack(side="left", padx=4)
         ttk.Button(tools, text="🧹 Clear Log",
                    command=self.clear_output).pack(side="right", padx=4)
 
@@ -636,6 +703,8 @@ class LabGUI:
             sig = f"{st.signal} dBm" if st.signal is not None else "—"
             self.tree.insert("", "end", tags=(tag,),
                              values=(st.mac, st.ip, sig, bars, st.hostname))
+            if st.ip not in ("—", "Unknown"):
+                self._ip_mac[st.ip] = st.mac
         self.client_count = len(stations)
 
     client_count = 0
@@ -665,6 +734,22 @@ class LabGUI:
         self.intel_stat = ttk.Label(bar, style="Muted.TLabel",
                                     text="idle · 0 domains · 0 auth · 0 cleartext")
         self.intel_stat.pack(side="right")
+
+        # --- Device profiles ---
+        prof = ttk.LabelFrame(parent, text="Device Profiles", padding=6)
+        prof.pack(fill="x", pady=(8, 4))
+        pcols = ("ip", "os", "apps", "logins", "domains", "active")
+        self.ptree = ttk.Treeview(prof, columns=pcols, show="headings", height=4)
+        for col, text, w in [("ip", "Device IP", 120), ("os", "OS / Vendor", 200),
+                             ("apps", "Apps detected", 300), ("logins", "Logins", 60),
+                             ("domains", "Domains", 70), ("active", "Last active", 90)]:
+            self.ptree.heading(col, text=text)
+            self.ptree.column(col, width=w, anchor="w")
+        self.ptree.pack(fill="x")
+        self.ptree.bind("<<TreeviewSelect>>", self._on_profile_select)
+        self.prof_detail = ttk.Label(prof, style="Muted.TLabel",
+                                     text="Select a device to see its full profile.")
+        self.prof_detail.pack(fill="x", pady=(6, 0))
 
         legend = ttk.Frame(parent)
         legend.pack(fill="x", pady=(6, 4))
@@ -800,7 +885,70 @@ class LabGUI:
             iid = self.itree.insert("", 0, tags=(cat,),
                                     values=(ts, src, kind, cat, 1, domain))
             self.intel_seen[key] = (iid, 1)
+        self._update_profile(src, domain, cat, ts)
         self._update_intel_stat()
+
+    # --- Per-device behavioural profiling ------------------------------------
+    @staticmethod
+    def _match_os(domain: str) -> str | None:
+        d = domain.lower()
+        for name, keys in OS_FINGERPRINTS:
+            if any(k in d for k in keys):
+                return name
+        return None
+
+    @staticmethod
+    def _match_apps(domain: str) -> list[str]:
+        d = domain.lower()
+        return [name for name, keys in APP_FINGERPRINTS if any(k in d for k in keys)]
+
+    def _update_profile(self, ip: str, domain: str, cat: str, ts: str) -> None:
+        if not ip or ip == "?":
+            return
+        p = self.profiles.get(ip)
+        if p is None:
+            p = DeviceProfile(ip)
+            p.first = ts
+            self.profiles[ip] = p
+        p.last = ts
+        p.domains.add(domain)
+        p.cats[cat] += 1
+        if not p.os:
+            osn = self._match_os(domain)
+            if osn:
+                p.os = osn
+        p.apps.update(self._match_apps(domain))
+        if cat == "auth":
+            p.logins[domain] = ts
+        if ip in self._ip_mac:
+            p.mac = self._ip_mac[ip]
+        self._refresh_profile_row(p)
+
+    def _refresh_profile_row(self, p: DeviceProfile) -> None:
+        apps = ", ".join(sorted(p.apps)) or "—"
+        vals = (p.ip, p.os or "unknown", apps, len(p.logins),
+                len(p.domains), p.last)
+        if p.ip in self.prof_seen:
+            self.ptree.item(self.prof_seen[p.ip], values=vals)
+        else:
+            self.prof_seen[p.ip] = self.ptree.insert("", "end", values=vals)
+
+    def _on_profile_select(self, event=None) -> None:
+        sel = self.ptree.selection()
+        if not sel:
+            return
+        ip = next((k for k, v in self.prof_seen.items() if v == sel[0]), None)
+        p = self.profiles.get(ip)
+        if not p:
+            return
+        cats = ", ".join(f"{k}:{v}" for k, v in p.cats.most_common())
+        logins = ", ".join(p.logins) or "none"
+        mac = f" [{p.mac}]" if p.mac else ""
+        apps = ", ".join(sorted(p.apps)) or "none"
+        self.prof_detail.configure(
+            text=(f"{p.ip}{mac} · {p.os or 'unknown OS'} · apps: {apps} · "
+                  f"logins: {logins} · categories: {cats} · "
+                  f"active {p.first}→{p.last}"))
 
     def _update_intel_stat(self) -> None:
         total = len(self.intel_seen)
@@ -814,6 +962,10 @@ class LabGUI:
     def clear_intel(self) -> None:
         self.itree.delete(*self.itree.get_children())
         self.intel_seen.clear()
+        self.ptree.delete(*self.ptree.get_children())
+        self.profiles.clear()
+        self.prof_seen.clear()
+        self.prof_detail.configure(text="Select a device to see its full profile.")
         self._update_intel_stat()
 
     def clear_output(self) -> None:

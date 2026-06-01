@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MITM // OPERATIONS</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="scanlines"></div>
+
+<header>
+  <div class="brand">
+    <span class="logo">◢◤</span>
+    <span class="title">MITM<span class="dim">//</span>OPERATIONS</span>
+    <span class="sub">passive metadata intelligence</span>
+  </div>
+  <div class="status">
+    <span class="dot" id="conn-dot"></span>
+    <span id="conn-text">CONNECTING…</span>
+    <span class="clock" id="clock">00:00:00</span>
+  </div>
+</header>
+
+<main>
+  <section class="globe-panel glass">
+    <div class="panel-label">LIVE GEO-INTELLIGENCE</div>
+    <div id="globe"></div>
+    <div class="globe-stats">
+      <div class="stat"><b id="s-domains">0</b><span>domains</span></div>
+      <div class="stat"><b id="s-devices">0</b><span>devices</span></div>
+      <div class="stat alert"><b id="s-auth">0</b><span>auth events</span></div>
+      <div class="stat"><b id="s-countries">0</b><span>countries</span></div>
+    </div>
+  </section>
+
+  <aside class="side">
+    <section class="devices glass">
+      <div class="panel-label">DEVICES</div>
+      <div id="device-list"></div>
+    </section>
+
+    <section class="feed glass">
+      <div class="panel-label">PACKET FEED
+        <span class="legend">
+          <i class="auth"></i>auth <i class="tracking"></i>track
+          <i class="media"></i>media <i class="cdn"></i>cdn <i class="other"></i>other
+        </span>
+      </div>
+      <div id="feed-list"></div>
+    </section>
+  </aside>
+</main>
+
+<!-- globe.gl bundles three.js. Local first (offline demo), CDN fallback. -->
+<script>
+  window._loadGlobe = function (done) {
+    var s = document.createElement('script');
+    s.src = 'static/globe.gl.min.js';
+    s.onload = done;
+    s.onerror = function () {
+      var c = document.createElement('script');
+      c.src = 'https://unpkg.com/globe.gl';
+      c.onload = done;
+      c.onerror = function () { done(); };
+      document.body.appendChild(c);
+    };
+    document.body.appendChild(s);
+  };
+</script>
+<script src="app.js"></script>
+</body>
+</html>
