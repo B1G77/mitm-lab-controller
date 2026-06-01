@@ -46,15 +46,21 @@ header {
 .title .dim { color: var(--accent); }
 .brand .sub { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 
-.status { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; }
-.dot {
-  width: 10px; height: 10px; border-radius: 50%;
-  background: var(--red); box-shadow: 0 0 10px var(--red);
+.status { display: flex; align-items: center; gap: 12px; font-size: 13px; font-weight: 600; }
+.mode {
+  padding: 4px 12px; border-radius: 20px; font-size: 12px; letter-spacing: 1px;
+  border: 1px solid var(--border);
 }
-.dot.live { background: var(--accent); box-shadow: 0 0 12px var(--accent);
-  animation: pulse 1.4s infinite; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
-.clock { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: 6px; }
+.mode.live { color: var(--accent); border-color: rgba(0,255,149,0.5);
+  box-shadow: 0 0 14px rgba(0,255,149,0.25); animation: pulse 1.5s infinite; }
+.mode.demo { color: var(--yellow); border-color: rgba(255,209,102,0.5); }
+.mode.error { color: var(--red); border-color: rgba(255,77,109,0.6);
+  box-shadow: 0 0 14px rgba(255,77,109,0.3); }
+.mode.off { color: var(--muted); }
+.mode-msg { color: var(--muted); font-weight: 400; font-size: 12px;
+  max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+.clock { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: 4px; }
 
 main {
   display: grid; grid-template-columns: 1fr 380px;
@@ -109,6 +115,11 @@ main {
 .tag.login { background: rgba(255,77,109,0.15); color: var(--red);
   border-color: rgba(255,77,109,0.4); }
 .device .meta { margin-top: 6px; font-size: 11px; color: var(--muted); }
+.device.stale { opacity: 0.4; filter: grayscale(0.6); }
+.empty, .globe-missing { color: var(--muted); text-align: center; padding: 40px 20px;
+  font-size: 13px; }
+.globe-missing code { color: var(--accent); }
+.hint { color: var(--muted); font-size: 10px; font-weight: 400; letter-spacing: 0; }
 
 #feed-list { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px;
   font-family: "Cascadia Mono", ui-monospace, monospace; }

@@ -190,6 +190,7 @@ class LabManager:
         PID_DIR.mkdir(parents=True, exist_ok=True)
         LEASES_FILE.touch(exist_ok=True)
         LOG_FILE.touch(exist_ok=True)
+        self.ops_proc: subprocess.Popen | None = None
 
     def clear_log(self) -> None:
         LOG_FILE.write_text("", encoding="utf-8")
@@ -321,6 +322,7 @@ class LabManager:
         # "Match already configured" / "Could not configure driver mode".
         self.run(["pkill", "-9", "-f", str(HOSTAPD_CONF)], check=False, quiet=True)
         self.run(["pkill", "-9", "-f", str(DHCPD_CONF)], check=False, quiet=True)
+        self.stop_ops_dashboard()   # tear down the dashboard with the AP
         self.run(["iptables", "-F"], check=False)
         self.run(["iptables", "-t", "nat", "-F"], check=False)
         if restore_net:
@@ -383,9 +385,11 @@ class LabManager:
         if not server.exists():
             raise CommandError("ops_server.py not found next to mitm_lab.py")
         subnet = str(ipaddress.ip_interface(f"{ap_ip}/{cidr}").network)
-        subprocess.Popen(["python3", str(server), "--iface", iface,
-                          "--subnet", subnet, "--ap-ip", ap_ip],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.stop_ops_dashboard()   # never run two servers at once
+        self.ops_proc = subprocess.Popen(
+            ["python3", str(server), "--iface", iface,
+             "--subnet", subnet, "--ap-ip", ap_ip],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(1.5)
         for opener in (["xdg-open", "http://127.0.0.1:8777/"],
                        ["sensible-browser", "http://127.0.0.1:8777/"]):
@@ -395,6 +399,16 @@ class LabManager:
             except FileNotFoundError:
                 continue
         self.log("Launched Ops Dashboard → http://127.0.0.1:8777/")
+
+    def stop_ops_dashboard(self) -> None:
+        if self.ops_proc and self.ops_proc.poll() is None:
+            try:
+                self.ops_proc.terminate()
+            except Exception:
+                pass
+        self.ops_proc = None
+        # Belt-and-suspenders: kill any ops_server started this or a prior run.
+        self.run(["pkill", "-9", "-f", "ops_server.py"], check=False, quiet=True)
 
 
 class LabGUI:
@@ -427,6 +441,21 @@ class LabGUI:
         self.root.after(150, self._drain_intel)
         self.root.after(1000, self._tick)
         self.root.after(self.REFRESH_MS, self._auto_refresh)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_close(self) -> None:
+        # Tear everything down on close. If the AP is live, fully dismantle it
+        # so the host doesn't get stranded with no Wi-Fi (NetworkManager stopped,
+        # hostapd/dhcpd orphaned); otherwise just kill the dashboard server.
+        self.capturing = False
+        try:
+            if self.running:
+                self.manager.stop(silent=True, clear_terminal=False)
+            else:
+                self.manager.stop_ops_dashboard()
+        except Exception:
+            pass
+        self.root.destroy()
 
     # --- Theming -------------------------------------------------------------
     def _init_style(self) -> None:

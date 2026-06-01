@@ -16,8 +16,8 @@
     <span class="sub">passive metadata intelligence</span>
   </div>
   <div class="status">
-    <span class="dot" id="conn-dot"></span>
-    <span id="conn-text">CONNECTING…</span>
+    <span class="mode" id="mode-badge">CONNECTING</span>
+    <span class="mode-msg" id="mode-msg"></span>
     <span class="clock" id="clock">00:00:00</span>
   </div>
 </header>
@@ -36,7 +36,7 @@
 
   <aside class="side">
     <section class="devices glass">
-      <div class="panel-label">DEVICES</div>
+      <div class="panel-label">DEVICES <span class="hint" id="dev-hint"></span></div>
       <div id="device-list"></div>
     </section>
 
@@ -52,8 +52,8 @@
   </aside>
 </main>
 
-<!-- globe.gl bundles three.js. Local first (offline demo), CDN fallback. -->
 <script>
+  // globe.gl bundles three.js. Local first (offline-safe), CDN fallback.
   window._loadGlobe = function (done) {
     var s = document.createElement('script');
     s.src = 'static/globe.gl.min.js';
@@ -61,8 +61,7 @@
     s.onerror = function () {
       var c = document.createElement('script');
       c.src = 'https://unpkg.com/globe.gl';
-      c.onload = done;
-      c.onerror = function () { done(); };
+      c.onload = done; c.onerror = function () { done(); };
       document.body.appendChild(c);
     };
     document.body.appendChild(s);
