@@ -272,13 +272,18 @@ class LabManager:
         self.stop(silent=True, clear_terminal=False, restore_net=False)
 
         # 1. Prep environment — stop everything that competes for the radio.
-        #    wpa_supplicant in particular yanks the interface out from under
-        #    hostapd (INTERFACE-DISABLED / "Failed to set beacon parameters")
-        #    if it keeps running, so kill it explicitly. iw reg set keeps the
-        #    driver from disabling the channel over a missing reg domain.
+        #    wpa_supplicant is the killer: it yanks the interface out from under
+        #    hostapd (INTERFACE-DISABLED / "Failed to set beacon parameters").
+        #    On Kali it runs as a systemd service that RESPAWNS after a plain
+        #    pkill, so stop the SERVICE first, then kill the process. Also reap
+        #    any hostapd left bound to the radio by a previous flapped/crashed
+        #    run (otherwise the next launch dies with "Match already configured").
         self.run(["nmcli", "radio", "wifi", "off"], check=False)
         self.run(["systemctl", "stop", "NetworkManager"], check=False)
-        self.run(["pkill", "wpa_supplicant"], check=False)
+        self.run(["systemctl", "stop", "wpa_supplicant"], check=False)
+        self.run(["pkill", "-9", "wpa_supplicant"], check=False)
+        self.run(["pkill", "-9", "hostapd"], check=False)
+        time.sleep(0.5)
         self.run(["rfkill", "unblock", "all"], check=False)
         self.run(["iw", "reg", "set", "US"], check=False)
 
@@ -314,8 +319,8 @@ class LabManager:
         # case a previous session was closed without Stop. Otherwise the old
         # hostapd stays bound to the radio and the next Start dies with
         # "Match already configured" / "Could not configure driver mode".
-        self.run(["pkill", "-f", str(HOSTAPD_CONF)], check=False, quiet=True)
-        self.run(["pkill", "-f", str(DHCPD_CONF)], check=False, quiet=True)
+        self.run(["pkill", "-9", "-f", str(HOSTAPD_CONF)], check=False, quiet=True)
+        self.run(["pkill", "-9", "-f", str(DHCPD_CONF)], check=False, quiet=True)
         self.run(["iptables", "-F"], check=False)
         self.run(["iptables", "-t", "nat", "-F"], check=False)
         if restore_net:
@@ -370,13 +375,16 @@ class LabManager:
         self.log(f"Launched Bettercap MITM session on {iface} (targets {net})")
         self.log(f"Bettercap packets saving to {sniff_out}")
 
-    def open_ops_dashboard(self, iface: str) -> None:
+    def open_ops_dashboard(self, iface: str, ap_ip: str, cidr: str) -> None:
         # Launch the web Ops Dashboard server and open it in a browser. ops_server
         # auto-falls back to its demo feed if pyshark/tshark aren't available.
+        # Pass the subnet + AP IP so the server captures only client traffic.
         server = Path(__file__).resolve().parent / "ops_server.py"
         if not server.exists():
             raise CommandError("ops_server.py not found next to mitm_lab.py")
-        subprocess.Popen(["python3", str(server), "--iface", iface],
+        subnet = str(ipaddress.ip_interface(f"{ap_ip}/{cidr}").network)
+        subprocess.Popen(["python3", str(server), "--iface", iface,
+                          "--subnet", subnet, "--ap-ip", ap_ip],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(1.5)
         for opener in (["xdg-open", "http://127.0.0.1:8777/"],
@@ -544,7 +552,9 @@ class LabGUI:
                                                 self.vars["cidr"].get())).pack(side="left", padx=4)
         ttk.Button(tools, text="🌐 Ops Dashboard", style="Go.TButton",
                    command=lambda: self._launch(self.manager.open_ops_dashboard,
-                                                self.vars["ap_iface"].get())).pack(side="left", padx=4)
+                                                self.vars["ap_iface"].get(),
+                                                self.vars["ap_ip"].get(),
+                                                self.vars["cidr"].get())).pack(side="left", padx=4)
         ttk.Button(tools, text="🧹 Clear Log",
                    command=self.clear_output).pack(side="right", padx=4)
 

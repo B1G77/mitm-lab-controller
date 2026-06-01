@@ -6,4 +6,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)/static"
 mkdir -p "$DIR"
 echo "Fetching globe.gl (includes three.js) → $DIR/globe.gl.min.js"
 curl -fL "https://unpkg.com/globe.gl" -o "$DIR/globe.gl.min.js"
-echo "Done. The dashboard will now load the globe without internet."
+echo "Fetching earth night texture → $DIR/earth-night.jpg"
+curl -fL "https://unpkg.com/three-globe/example/img/earth-night.jpg" \
+  -o "$DIR/earth-night.jpg" || echo "  (texture optional — globe falls back to a dark sphere)"
+echo "Done. The dashboard now loads the globe AND texture without internet."

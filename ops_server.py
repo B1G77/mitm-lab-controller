@@ -147,7 +147,37 @@ class EventBus:
 
 
 BUS = EventBus()
-GEO = None  # set in main
+GEO = None        # set in main
+CAPTURE_FILTER = "udp port 53 or tcp port 443 or tcp port 80"
+AP_IP = None      # gateway IP to exclude from the feed
+
+# Dedup: suppress the same (src, domain) seen again within this many seconds, so
+# TCP retransmits and repeat lookups don't flood the feed/globe.
+DEDUP_TTL = 20.0
+_recent: dict = {}
+
+
+def _is_dup(src: str, domain: str) -> bool:
+    now = time.time()
+    key = f"{src}|{domain}"
+    last = _recent.get(key, 0)
+    _recent[key] = now
+    if len(_recent) > 4000:   # bound memory
+        for k, t in list(_recent.items()):
+            if now - t > DEDUP_TTL:
+                _recent.pop(k, None)
+    return (now - last) < DEDUP_TTL
+
+
+def build_filter(subnet: str | None, ap_ip: str | None) -> str:
+    """BPF: only client-originated DNS/TLS/HTTP in the AP subnet, never the AP
+    itself. Keeps the dashboard to victim traffic instead of the whole host."""
+    f = f"({CAPTURE_FILTER})"
+    if subnet:
+        f += f" and src net {subnet}"
+    if ap_ip:
+        f += f" and not src host {ap_ip}"
+    return f
 
 
 def emit(src: str, kind: str, domain: str) -> None:
@@ -173,10 +203,8 @@ def run_live(iface: str) -> bool:
         return False
     try:
         asyncio.set_event_loop(asyncio.new_event_loop())
-        cap = pyshark.LiveCapture(
-            interface=iface,
-            bpf_filter="udp port 53 or tcp port 443 or tcp port 80")
-        print(f"[live] capturing on {iface}")
+        cap = pyshark.LiveCapture(interface=iface, bpf_filter=CAPTURE_FILTER)
+        print(f"[live] capturing on {iface} :: {CAPTURE_FILTER}")
         for pkt in cap.sniff_continuously():
             _handle_pkt(pkt)
     except Exception as e:
@@ -226,6 +254,8 @@ def _handle_pkt(pkt) -> None:
             if not domain and "http" in names and hasattr(pkt.http, "host"):
                 kind, domain = "HTTP", pkt.http.host
         if not domain:
+            return
+        if src == AP_IP or _is_dup(src, domain.rstrip(".")):
             return
         ev = emit(src, kind, domain)
         loc = GEO.locate(dst) if dst else None
@@ -329,13 +359,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global GEO
+    global GEO, CAPTURE_FILTER, AP_IP
     ap = argparse.ArgumentParser()
     ap.add_argument("--iface", help="capture live on this interface")
     ap.add_argument("--pcap", help="replay a saved pcap file")
     ap.add_argument("--demo", action="store_true", help="synthetic demo feed")
+    ap.add_argument("--subnet", help="AP subnet (e.g. 192.168.50.0/24) — capture clients only")
+    ap.add_argument("--ap-ip", dest="ap_ip", help="AP/gateway IP to exclude from the feed")
     ap.add_argument("--port", type=int, default=PORT)
     args = ap.parse_args()
+    CAPTURE_FILTER = build_filter(args.subnet, args.ap_ip)
+    AP_IP = args.ap_ip
     GEO = GeoResolver()
     start_capture(args)
     srv = ThreadingHTTPServer((HOST, args.port), Handler)

@@ -27,13 +27,17 @@ function initGlobe() {
       'or connect to the internet once.</div>';
     return;
   }
+  // Texture is bundled locally (web/static/earth-night.jpg via fetch_libs.sh)
+  // because the AP being live cuts the host's internet — a CDN URL would 404
+  // mid-demo. If the local file is missing the globe falls back to a dark
+  // sphere, which still looks on-brand.
   globe = Globe()(el)
     .backgroundColor("rgba(0,0,0,0)")
     .showGlobe(true)
     .showAtmosphere(true)
     .atmosphereColor("#00ff95")
     .atmosphereAltitude(0.18)
-    .globeImageUrl("//unpkg.com/three-globe/example/img/earth-night.jpg")
+    .globeImageUrl("static/earth-night.jpg")
     .arcColor("color")
     .arcStroke(0.5)
     .arcDashLength(0.45)
@@ -45,8 +49,13 @@ function initGlobe() {
     .ringPropagationSpeed(2.2)
     .ringRepeatPeriod(700);
 
-  // dark globe with no texture if offline (texture is from CDN); still works
-  globe.onGlobeReady && globe.onGlobeReady(() => {});
+  // Dark teal base so a missing texture reads as an intentional dark planet.
+  try {
+    const mat = globe.globeMaterial();
+    mat.color = new THREE.Color("#0a1a16");
+    mat.emissive = new THREE.Color("#021a12");
+    mat.emissiveIntensity = 0.35;
+  } catch (e) {}
 
   const resize = () => globe.width(el.clientWidth).height(el.clientHeight);
   resize();
