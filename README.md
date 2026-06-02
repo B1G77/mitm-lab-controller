@@ -131,18 +131,23 @@ and the AP will never start.
 ### 4. Free the radio (the tool does this for you)
 
 hostapd fails with `INTERFACE-DISABLED` / `Failed to set beacon parameters` if
-NetworkManager or `wpa_supplicant` keep hold of the interface. Start now handles
-this automatically: it stops NetworkManager, kills `wpa_supplicant`, runs
-`rfkill unblock all`, and sets the regulatory domain before launching hostapd.
+NetworkManager or `wpa_supplicant` keep hold of the interface. Start handles this
+automatically, and deliberately does NOT stop NetworkManager (that killed eth0's
+internet and often needed a reboot to recover). Instead it sets only `wlan0`
+unmanaged, stops the `wpa_supplicant` service, unblocks rfkill, and sets the
+regulatory domain. eth0 keeps internet the whole time; Stop hands `wlan0` back.
 
 If you ever test hostapd by hand, run the same prep first:
 
 ```bash
-sudo systemctl stop NetworkManager
-sudo pkill wpa_supplicant
+sudo nmcli device set wlan0 managed no
+sudo systemctl stop wpa_supplicant
+sudo pkill -9 wpa_supplicant
 sudo rfkill unblock all
 sudo iw reg set US
 sudo ip link set wlan0 up
+# when done, return it to NetworkManager:
+sudo nmcli device set wlan0 managed yes
 ```
 
 ### 5. Run it

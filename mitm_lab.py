@@ -191,6 +191,7 @@ class LabManager:
         LEASES_FILE.touch(exist_ok=True)
         LOG_FILE.touch(exist_ok=True)
         self.ops_proc: subprocess.Popen | None = None
+        self.ap_iface: str | None = None   # remembered so stop() can restore it
 
     def clear_log(self) -> None:
         LOG_FILE.write_text("", encoding="utf-8")
@@ -267,23 +268,24 @@ class LabManager:
     def start(self, cfg: LabConfig) -> None:
         if hasattr(os, "geteuid") and os.geteuid() != 0:
             raise CommandError("Run as root/sudo.")
+        self.ap_iface = cfg.ap_iface       # remember for stop()/restore
         self.write_configs(cfg)
-        # Pre-start cleanup reaps any leftover daemons but leaves NetworkManager
-        # alone; the prep block below stops it deliberately.
+        # Pre-start cleanup reaps any leftover daemons; restore_net=False so it
+        # doesn't hand the radio back to NetworkManager right before we take it.
         self.stop(silent=True, clear_terminal=False, restore_net=False)
 
-        # 1. Prep environment — stop everything that competes for the radio.
-        #    wpa_supplicant is the killer: it yanks the interface out from under
-        #    hostapd (INTERFACE-DISABLED / "Failed to set beacon parameters").
-        #    On Kali it runs as a systemd service that RESPAWNS after a plain
-        #    pkill, so stop the SERVICE first, then kill the process. Also reap
-        #    any hostapd left bound to the radio by a previous flapped/crashed
-        #    run (otherwise the next launch dies with "Match already configured").
-        self.run(["nmcli", "radio", "wifi", "off"], check=False)
-        self.run(["systemctl", "stop", "NetworkManager"], check=False)
+        # 1. Prep environment — free ONLY the AP interface, never the whole box.
+        #    Earlier this stopped NetworkManager entirely, which also killed
+        #    eth0's internet and frequently didn't recover without a reboot, and
+        #    let NM re-grab wlan0 between runs ("Device or resource busy"). The
+        #    fix: keep NM running for eth0, and just set wlan0 unmanaged. We
+        #    still stop the wpa_supplicant SERVICE (it respawns after a plain
+        #    pkill and flaps hostapd) and reap any lingering hostapd.
+        self.run(["systemctl", "start", "NetworkManager"], check=False)  # ensure eth0 up
         self.run(["systemctl", "stop", "wpa_supplicant"], check=False)
         self.run(["pkill", "-9", "wpa_supplicant"], check=False)
         self.run(["pkill", "-9", "hostapd"], check=False)
+        self.run(["nmcli", "device", "set", cfg.ap_iface, "managed", "no"], check=False)
         time.sleep(0.5)
         self.run(["rfkill", "unblock", "all"], check=False)
         self.run(["iw", "reg", "set", "US"], check=False)
@@ -325,8 +327,14 @@ class LabManager:
         self.stop_ops_dashboard()   # tear down the dashboard with the AP
         self.run(["iptables", "-F"], check=False)
         self.run(["iptables", "-t", "nat", "-F"], check=False)
+        iface = self.ap_iface or "wlan0"
+        self.run(["ip", "addr", "flush", "dev", iface], check=False)   # drop the AP IP
         if restore_net:
-            self.run(["systemctl", "start", "NetworkManager"], check=False)
+            # Hand the interface back to NetworkManager and turn off forwarding.
+            # NM was never stopped, so eth0's internet was never interrupted —
+            # this just returns wlan0 to normal Wi-Fi. No reboot needed.
+            self.run(["sh", "-c", "echo 0 > /proc/sys/net/ipv4/ip_forward"], check=False)
+            self.run(["nmcli", "device", "set", iface, "managed", "yes"], check=False)
             self.run(["nmcli", "radio", "wifi", "on"], check=False)
         if not silent:
             self.log("Lab network dismantled.")
