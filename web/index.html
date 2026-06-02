@@ -7,16 +7,26 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="scanlines"></div>
+<div id="scanlines" aria-hidden="true"></div>
 
 <header>
   <div class="brand">
-    <span class="logo">◢◤</span>
-    <span class="title">MITM<span class="dim">//</span>OPERATIONS</span>
-    <span class="sub">passive metadata intelligence</span>
+    <span class="logo" aria-hidden="true">◢◤</span>
+    <div class="brand-text">
+      <span class="title">MITM<span class="dim">//</span>OPERATIONS</span>
+      <span class="sub">passive metadata intelligence</span>
+    </div>
   </div>
+
+  <div class="stats" id="stats">
+    <div class="chip"><b id="s-devices">0</b><span>devices</span></div>
+    <div class="chip"><b id="s-domains">0</b><span>domains</span></div>
+    <div class="chip alert"><b id="s-auth">0</b><span>logins</span></div>
+    <div class="chip"><b id="s-countries">0</b><span>countries</span></div>
+  </div>
+
   <div class="status">
-    <span class="mode" id="mode-badge">CONNECTING</span>
+    <span class="mode off" id="mode-badge">● CONNECTING</span>
     <span class="mode-msg" id="mode-msg"></span>
     <span class="clock" id="clock">00:00:00</span>
   </div>
@@ -24,14 +34,13 @@
 
 <main>
   <section class="globe-panel glass">
-    <div class="panel-label">LIVE GEO-INTELLIGENCE</div>
-    <div id="globe"></div>
-    <div class="globe-stats">
-      <div class="stat"><b id="s-domains">0</b><span>domains</span></div>
-      <div class="stat"><b id="s-devices">0</b><span>devices</span></div>
-      <div class="stat alert"><b id="s-auth">0</b><span>auth events</span></div>
-      <div class="stat"><b id="s-countries">0</b><span>countries</span></div>
+    <div class="panel-label">LIVE GEO-INTELLIGENCE
+      <span class="legend" id="legend">
+        <i class="auth"></i>auth <i class="tracking"></i>tracking
+        <i class="media"></i>media <i class="cdn"></i>cdn <i class="other"></i>other
+      </span>
     </div>
+    <div id="globe"></div>
   </section>
 
   <aside class="side">
@@ -41,13 +50,14 @@
     </section>
 
     <section class="feed glass">
-      <div class="panel-label">PACKET FEED
-        <span class="legend">
-          <i class="auth"></i>auth <i class="tracking"></i>track
-          <i class="media"></i>media <i class="cdn"></i>cdn <i class="other"></i>other
-        </span>
+      <div class="panel-label">LIVE METADATA
+        <span class="filter" id="filter-tag" hidden></span>
       </div>
-      <div id="feed-list"></div>
+      <div class="table-head">
+        <span>Time</span><span>Type</span><span>Cat</span>
+        <span class="num">Hits</span><span class="grow">Domain</span><span>Loc</span>
+      </div>
+      <div id="meta-rows"></div>
     </section>
   </aside>
 </main>

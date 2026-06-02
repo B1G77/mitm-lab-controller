@@ -179,6 +179,29 @@ def meta_event() -> dict:
     return {"_meta": True, "mode": MODE, "msg": MODE_MSG, "home": HOME}
 
 
+def detect_home() -> None:
+    """Geolocate the host's own public IP so the globe's AP marker and arc
+    origin sit at the real location, not a hardcoded city. Uses the free
+    ip-api.com (no key); eth0 stays online while the AP runs, so this works."""
+    global HOME
+    import urllib.request
+    try:
+        url = ("http://ip-api.com/json/?fields=status,lat,lon,city,"
+               "countryCode")
+        with urllib.request.urlopen(url, timeout=4) as r:
+            d = json.loads(r.read().decode())
+        if d.get("status") == "success" and d.get("lat") is not None:
+            city = d.get("city") or ""
+            HOME = {"lat": d["lat"], "lon": d["lon"],
+                    "label": f"AP · {city}" if city else "ROGUE AP",
+                    "city": city, "country": d.get("countryCode", "")}
+            log(f"[geo] AP located via public IP: {city} "
+                f"({d['lat']:.2f},{d['lon']:.2f})")
+            return
+    except Exception as e:
+        log(f"[geo] public-IP lookup failed ({e}); using default HOME")
+
+
 def _is_dup(src: str, domain: str) -> bool:
     now = time.time()
     key = f"{src}|{domain}"
@@ -401,6 +424,7 @@ def main():
     CAPTURE_FILTER = build_filter(args.subnet, args.ap_ip)
     AP_IP = args.ap_ip
     GEO = GeoResolver()
+    detect_home()              # set the AP marker to the real location
     start_capture(args)
     srv = ThreadingHTTPServer((HOST, args.port), Handler)
     log(f"[ops] dashboard at http://{HOST}:{args.port}/")

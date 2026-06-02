@@ -8,7 +8,6 @@ test. Intended for studying and explaining man-in-the-middle attacks.
 
 from __future__ import annotations
 
-from collections import Counter
 import ipaddress
 import os
 import queue
@@ -48,54 +47,6 @@ RED = "#ff6b6b"       # errors
 YELLOW = "#f1fa8c"    # warnings
 MONO = ("Cascadia Mono", 10) if os.name == "nt" else ("monospace", 10)
 
-# Domain categories for the live intelligence dashboard. First match wins, so
-# the high-signal category (auth) is listed before the broad ones (cdn). Each
-# rule is (name, colour, substring keywords matched against the hostname).
-INTEL_RULES = [
-    ("auth", "#ff6b6b",
-     ["login", "signin", "sign-in", "accounts", "account", "oauth", "/auth",
-      "auth.", "sso", "logon", "id."]),
-    ("tracking", "#f1fa8c",
-     ["analytic", "tracking", "telemetry", "metric", "doubleclick", "adservice",
-      "ads.", "adsystem", "appsflyer", "sentry", "crashlytic", "snplow",
-      "scorecard", "branch.io", "segment", "mixpanel"]),
-    ("media", "#00ff41",
-     ["spotify", "scdn", "youtube", "googlevideo", "discord", "netflix",
-      "twitch", "music", "video", "vimeo", "soundcloud", "tiktok"]),
-    ("cdn", "#8b949e",
-     ["akamai", "akadns", "fastly", "cloudfront", "cloudflare", "edgekey",
-      "edgesuite", "gstatic", "googleapis", "gvt1", "apple.com", "icloud",
-      "aaplimg", "1e100"]),
-]
-
-# Domain fingerprints used to guess a device's OS/vendor. Phones randomize
-# their MAC, so the hostnames they contact are a more reliable signal than OUI.
-OS_FINGERPRINTS = [
-    ("Apple (iPhone / iPad / Mac)",
-     ["apple.com", "icloud", "aaplimg", "itunes", "mzstatic", "push.apple",
-      "cdn-apple", "apps.apple"]),
-    ("Android / Google",
-     ["android.clients.google", "android.googleapis", "gvt1", "play.googleapis",
-      "googleusercontent", "dl.google", "connectivitycheck.gstatic"]),
-    ("Samsung", ["samsung", "samsungcloud", "samsungqbe"]),
-    ("Windows", ["windowsupdate", "msftncsi", "msftconnecttest", "microsoft.com"]),
-]
-
-# App fingerprints: which apps a device is running, inferred from hostnames.
-APP_FINGERPRINTS = [
-    ("Spotify", ["spotify", "scdn"]),
-    ("Discord", ["discord"]),
-    ("YouTube", ["youtube", "googlevideo"]),
-    ("Instagram", ["instagram", "cdninstagram"]),
-    ("WhatsApp", ["whatsapp"]),
-    ("TikTok", ["tiktok", "byteoversea", "musical.ly"]),
-    ("Netflix", ["netflix", "nflxvideo"]),
-    ("Snapchat", ["snapchat", "sc-cdn"]),
-    ("Facebook", ["facebook", "fbcdn"]),
-    ("Twitch", ["twitch", "ttvnw"]),
-]
-
-
 class CommandError(RuntimeError):
     pass
 
@@ -106,21 +57,6 @@ class Station:
     ip: str
     signal: int | None
     hostname: str
-
-
-class DeviceProfile:
-    """Behavioural profile built up from one device's metadata stream."""
-
-    def __init__(self, ip: str) -> None:
-        self.ip = ip
-        self.mac = ""
-        self.os = ""
-        self.apps: set[str] = set()
-        self.domains: set[str] = set()
-        self.cats: Counter = Counter()
-        self.logins: dict[str, str] = {}   # auth domain -> last-seen time
-        self.first = ""
-        self.last = ""
 
 
 @dataclass
@@ -429,33 +365,23 @@ class LabGUI:
         self.running = False
         self.start_time: float | None = None
         self.busy = False
-
-        # Live intelligence (Intelligence tab) state.
-        self.intel_queue: queue.Queue = queue.Queue()
-        self.intel_seen: dict[str, tuple] = {}   # "TYPE:domain" -> (item_id, hits)
-        self.capturing = False
-        self._intel_cap = None
-        self.profiles: dict[str, DeviceProfile] = {}   # ip -> profile
-        self.prof_seen: dict[str, str] = {}            # ip -> tree item id
-        self._ip_mac: dict[str, str] = {}              # ip -> mac (from leases)
+        self._ip_mac: dict[str, str] = {}   # ip -> mac (from leases), clients table
 
         root.title("MITM Lab Controller")
-        root.geometry("1040x820")
+        root.geometry("1040x720")
         root.configure(bg=BG)
         self._init_style()
         self._build_ui()
         self._start_log_tail()
         self.root.after(100, self._drain_log)
-        self.root.after(150, self._drain_intel)
         self.root.after(1000, self._tick)
         self.root.after(self.REFRESH_MS, self._auto_refresh)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _on_close(self) -> None:
         # Tear everything down on close. If the AP is live, fully dismantle it
-        # so the host doesn't get stranded with no Wi-Fi (NetworkManager stopped,
-        # hostapd/dhcpd orphaned); otherwise just kill the dashboard server.
-        self.capturing = False
+        # so the host isn't stranded with no Wi-Fi; otherwise just kill the
+        # dashboard server.
         try:
             if self.running:
                 self.manager.stop(silent=True, clear_terminal=False)
@@ -502,13 +428,10 @@ class LabGUI:
 
     # --- Layout --------------------------------------------------------------
     def _build_ui(self) -> None:
-        nb = ttk.Notebook(self.root)
-        nb.pack(fill="both", expand=True)
-        frm = ttk.Frame(nb, padding=12)
-        nb.add(frm, text="  Control  ")
-        intel = ttk.Frame(nb, padding=12)
-        nb.add(intel, text="  Intelligence  ")
-        self._build_intel_tab(intel)
+        # Single clean control panel. All live traffic intelligence (device
+        # profiles, metadata, the globe) now lives in the web Ops Dashboard.
+        frm = ttk.Frame(self.root, padding=12)
+        frm.pack(fill="both", expand=True)
 
         top = ttk.LabelFrame(frm, text="1 · Setup Parameters", padding=10)
         top.pack(fill="x")
@@ -769,251 +692,6 @@ class LabGUI:
         else:
             self.stat_lbl.configure(text="0 clients · up 00:00:00")
         self.root.after(1000, self._tick)
-
-    # --- Intelligence tab: live DNS / TLS-SNI / HTTP metadata ----------------
-    def _build_intel_tab(self, parent: ttk.Frame) -> None:
-        bar = ttk.Frame(parent)
-        bar.pack(fill="x")
-        self.btn_capture = ttk.Button(bar, text="🛰 Start Capture",
-                                      style="Go.TButton", command=self.toggle_capture)
-        self.btn_capture.pack(side="left", padx=4)
-        ttk.Button(bar, text="🧹 Clear", command=self.clear_intel).pack(side="left", padx=4)
-        self.intel_stat = ttk.Label(bar, style="Muted.TLabel",
-                                    text="idle · 0 domains · 0 auth · 0 cleartext")
-        self.intel_stat.pack(side="right")
-
-        # --- Device profiles ---
-        prof = ttk.LabelFrame(parent, text="Device Profiles", padding=6)
-        prof.pack(fill="x", pady=(8, 4))
-        pcols = ("ip", "os", "apps", "logins", "domains", "active")
-        self.ptree = ttk.Treeview(prof, columns=pcols, show="headings", height=4)
-        for col, text, w in [("ip", "Device IP", 120), ("os", "OS / Vendor", 200),
-                             ("apps", "Apps detected", 300), ("logins", "Logins", 60),
-                             ("domains", "Domains", 70), ("active", "Last active", 90)]:
-            self.ptree.heading(col, text=text)
-            self.ptree.column(col, width=w, anchor="w")
-        self.ptree.pack(fill="x")
-        self.ptree.bind("<<TreeviewSelect>>", self._on_profile_select)
-        self.prof_detail = ttk.Label(prof, style="Muted.TLabel",
-                                     text="Select a device to see its full profile.")
-        self.prof_detail.pack(fill="x", pady=(6, 0))
-
-        legend = ttk.Frame(parent)
-        legend.pack(fill="x", pady=(6, 4))
-        for cat, color, _ in INTEL_RULES:
-            tk.Label(legend, text=f"● {cat}", fg=color, bg=BG).pack(side="left", padx=6)
-        tk.Label(legend, text="● other", fg=BLUE, bg=BG).pack(side="left", padx=6)
-
-        wrap = ttk.LabelFrame(parent, text="Live Metadata  (DNS · TLS SNI · HTTP)",
-                              padding=6)
-        wrap.pack(fill="both", expand=True)
-        cols = ("time", "victim", "type", "cat", "hits", "domain")
-        self.itree = ttk.Treeview(wrap, columns=cols, show="headings")
-        for col, text, w in [("time", "Last seen", 90), ("victim", "Victim", 130),
-                             ("type", "Type", 60), ("cat", "Category", 100),
-                             ("hits", "Hits", 55), ("domain", "Domain / Hostname", 430)]:
-            self.itree.heading(col, text=text)
-            self.itree.column(col, width=w, anchor="w")
-        for cat, color, _ in INTEL_RULES:
-            self.itree.tag_configure(cat, foreground=color)
-        self.itree.tag_configure("other", foreground=BLUE)
-        self.itree.pack(fill="both", expand=True)
-
-        ttk.Label(parent, style="Muted.TLabel", text=(
-            "Sniffs the AP interface and surfaces metadata. Modern traffic is "
-            "HTTPS, so this shows which hosts the victim contacts (DNS + TLS SNI), "
-            "not content. Needs: apt install tshark · pip install pyshark")
-        ).pack(fill="x", pady=(6, 0))
-
-    def toggle_capture(self) -> None:
-        self.stop_capture() if self.capturing else self.start_capture()
-
-    def start_capture(self) -> None:
-        iface = self.vars["ap_iface"].get().strip()
-        self.capturing = True
-        self.btn_capture.configure(text="🛑 Stop Capture", style="Stop.TButton")
-        self.intel_stat.configure(text=f"capturing on {iface} …")
-        threading.Thread(target=self._capture_loop, args=(iface,), daemon=True).start()
-
-    def stop_capture(self) -> None:
-        self.capturing = False
-        cap = self._intel_cap
-        if cap is not None:
-            try:
-                cap.close()
-            except Exception:
-                pass
-        self.btn_capture.configure(text="🛰 Start Capture", style="Go.TButton")
-
-    def _capture_loop(self, iface: str) -> None:
-        try:
-            import asyncio
-            import pyshark
-        except Exception as e:  # pyshark / tshark not installed
-            self.intel_queue.put(("__error__", f"pyshark or tshark missing: {e}"))
-            self.root.after(0, self._on_capture_stopped)
-            return
-        try:
-            asyncio.set_event_loop(asyncio.new_event_loop())
-            cap = pyshark.LiveCapture(
-                interface=iface,
-                bpf_filter="udp port 53 or tcp port 443 or tcp port 80",
-            )
-            self._intel_cap = cap
-            for pkt in cap.sniff_continuously():
-                if not self.capturing:
-                    break
-                item = self._extract_intel(pkt)
-                if item:
-                    self.intel_queue.put(item)
-        except Exception as e:
-            self.intel_queue.put(("__error__", str(e)))
-        finally:
-            self._intel_cap = None
-            self.root.after(0, self._on_capture_stopped)
-
-    def _on_capture_stopped(self) -> None:
-        self.capturing = False
-        self.btn_capture.configure(text="🛰 Start Capture", style="Go.TButton")
-        self._update_intel_stat()
-
-    @staticmethod
-    def _extract_intel(pkt):
-        try:
-            names = {layer.layer_name for layer in pkt.layers}
-            ts = time.strftime("%H:%M:%S", time.localtime(float(pkt.sniff_timestamp)))
-            src = pkt.ip.src if "ip" in names else "?"
-            if "dns" in names and hasattr(pkt.dns, "qry_name"):
-                return (ts, src, "DNS", pkt.dns.qry_name)
-            for lname in ("tls", "ssl"):
-                if lname in names:
-                    sni = getattr(getattr(pkt, lname),
-                                  "handshake_extensions_server_name", None)
-                    if sni:
-                        return (ts, src, "SNI", sni)
-            if "http" in names and hasattr(pkt.http, "host"):
-                return (ts, src, "HTTP", pkt.http.host)
-        except Exception:
-            return None
-        return None
-
-    @staticmethod
-    def _categorize(domain: str) -> str:
-        d = domain.lower()
-        for cat, _color, keys in INTEL_RULES:
-            if any(k in d for k in keys):
-                return cat
-        return "other"
-
-    def _drain_intel(self) -> None:
-        try:
-            while True:
-                item = self.intel_queue.get_nowait()
-                if item[0] == "__error__":
-                    self.intel_stat.configure(text=f"error: {item[1][:70]}")
-                    continue
-                self._render_intel(item)
-        except queue.Empty:
-            pass
-        self.root.after(150, self._drain_intel)
-
-    def _render_intel(self, item) -> None:
-        ts, src, kind, domain = item
-        domain = domain.rstrip(".")
-        cat = self._categorize(domain)
-        key = f"{kind}:{domain}"
-        if key in self.intel_seen:
-            iid, hits = self.intel_seen[key]
-            hits += 1
-            self.intel_seen[key] = (iid, hits)
-            self.itree.set(iid, "time", ts)
-            self.itree.set(iid, "hits", hits)
-        else:
-            iid = self.itree.insert("", 0, tags=(cat,),
-                                    values=(ts, src, kind, cat, 1, domain))
-            self.intel_seen[key] = (iid, 1)
-        self._update_profile(src, domain, cat, ts)
-        self._update_intel_stat()
-
-    # --- Per-device behavioural profiling ------------------------------------
-    @staticmethod
-    def _match_os(domain: str) -> str | None:
-        d = domain.lower()
-        for name, keys in OS_FINGERPRINTS:
-            if any(k in d for k in keys):
-                return name
-        return None
-
-    @staticmethod
-    def _match_apps(domain: str) -> list[str]:
-        d = domain.lower()
-        return [name for name, keys in APP_FINGERPRINTS if any(k in d for k in keys)]
-
-    def _update_profile(self, ip: str, domain: str, cat: str, ts: str) -> None:
-        if not ip or ip == "?":
-            return
-        p = self.profiles.get(ip)
-        if p is None:
-            p = DeviceProfile(ip)
-            p.first = ts
-            self.profiles[ip] = p
-        p.last = ts
-        p.domains.add(domain)
-        p.cats[cat] += 1
-        if not p.os:
-            osn = self._match_os(domain)
-            if osn:
-                p.os = osn
-        p.apps.update(self._match_apps(domain))
-        if cat == "auth":
-            p.logins[domain] = ts
-        if ip in self._ip_mac:
-            p.mac = self._ip_mac[ip]
-        self._refresh_profile_row(p)
-
-    def _refresh_profile_row(self, p: DeviceProfile) -> None:
-        apps = ", ".join(sorted(p.apps)) or "—"
-        vals = (p.ip, p.os or "unknown", apps, len(p.logins),
-                len(p.domains), p.last)
-        if p.ip in self.prof_seen:
-            self.ptree.item(self.prof_seen[p.ip], values=vals)
-        else:
-            self.prof_seen[p.ip] = self.ptree.insert("", "end", values=vals)
-
-    def _on_profile_select(self, event=None) -> None:
-        sel = self.ptree.selection()
-        if not sel:
-            return
-        ip = next((k for k, v in self.prof_seen.items() if v == sel[0]), None)
-        p = self.profiles.get(ip)
-        if not p:
-            return
-        cats = ", ".join(f"{k}:{v}" for k, v in p.cats.most_common())
-        logins = ", ".join(p.logins) or "none"
-        mac = f" [{p.mac}]" if p.mac else ""
-        apps = ", ".join(sorted(p.apps)) or "none"
-        self.prof_detail.configure(
-            text=(f"{p.ip}{mac} · {p.os or 'unknown OS'} · apps: {apps} · "
-                  f"logins: {logins} · categories: {cats} · "
-                  f"active {p.first}→{p.last}"))
-
-    def _update_intel_stat(self) -> None:
-        total = len(self.intel_seen)
-        auth = sum(1 for k in self.intel_seen
-                   if self._categorize(k.split(":", 1)[1]) == "auth")
-        clear = sum(1 for k in self.intel_seen if k.startswith("HTTP:"))
-        state = "capturing" if self.capturing else "stopped" if total else "idle"
-        self.intel_stat.configure(
-            text=f"{state} · {total} domains · {auth} auth · {clear} cleartext")
-
-    def clear_intel(self) -> None:
-        self.itree.delete(*self.itree.get_children())
-        self.intel_seen.clear()
-        self.ptree.delete(*self.ptree.get_children())
-        self.profiles.clear()
-        self.prof_seen.clear()
-        self.prof_detail.configure(text="Select a device to see its full profile.")
-        self._update_intel_stat()
 
     def clear_output(self) -> None:
         self.output.configure(state="normal")

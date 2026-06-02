@@ -1,24 +1,24 @@
 "use strict";
 
-// --- Category colors (match style.css) --------------------------------------
 const CAT_COLOR = {
   auth: "#ff4d6d", tracking: "#ffd166", media: "#00ff95",
-  cdn: "#7d8aa3", other: "#38bdf8",
+  cdn: "#8ea0bd", other: "#38bdf8",
 };
-const STALE_MS = 90000;   // a device with no traffic for this long goes dim
+const STALE_MS = 90000;
+const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-// --- State ------------------------------------------------------------------
 const state = {
   domains: new Set(), countries: new Set(), authCount: 0,
   devices: new Map(),   // ip -> {os, apps:Set, logins:Set, domains:Set, last, lastMs}
+  meta: new Map(),      // "ip|kind|domain" -> {ip,kind,domain,cat,hits,ts,lastMs,loc}
   arcs: [], rings: [], points: [], labels: [],
-  online: false,
+  online: false, selected: null,
 };
 let globe = null;
 let home = { lat: 38.7223, lon: -9.1393, label: "ROGUE AP" };
-let flewHome = false;   // only auto-frame the globe once, not on every reconnect
+let flewHome = false;
 
-// --- Globe ------------------------------------------------------------------
+// ---- Globe ----
 function initGlobe() {
   const el = document.getElementById("globe");
   if (typeof Globe === "undefined") {
@@ -26,122 +26,107 @@ function initGlobe() {
       'Run <code>bash web/fetch_libs.sh</code> once while online.</div>';
     return;
   }
-  // Configure defensively: a CDN-fallback globe.gl of a different version may
-  // be missing a method, and a fluent chain would throw and blank the globe.
-  // Apply each setter independently so one missing method can't kill the rest.
   globe = Globe()(el);
   const cfg = {
     backgroundColor: "rgba(0,0,0,0)", showGlobe: true, showAtmosphere: true,
     atmosphereColor: "#00ff95", atmosphereAltitude: 0.2,
     globeImageUrl: "static/earth-night.jpg",
-    arcColor: "color", arcStroke: 0.6, arcDashLength: 0.4, arcDashGap: 0.18,
-    arcDashAnimateTime: 1500, arcAltitudeAutoScale: 0.45, arcsTransitionDuration: 0,
+    arcColor: "color", arcStroke: 0.55, arcDashLength: 0.4, arcDashGap: 0.18,
+    arcDashAnimateTime: REDUCED ? 0 : 1500, arcAltitudeAutoScale: 0.45,
+    arcsTransitionDuration: 0,
     ringColor: (r) => r.color, ringMaxRadius: 4,
-    ringPropagationSpeed: 2.5, ringRepeatPeriod: 650,
+    ringPropagationSpeed: 2.5, ringRepeatPeriod: REDUCED ? 0 : 650,
     pointsData: [], pointColor: "color", pointAltitude: 0.012,
     pointRadius: (d) => d.r, pointsMerge: false,
     labelsData: [], labelLat: "lat", labelLng: "lng", labelText: "text",
-    labelColor: (d) => d.color, labelSize: 0.9, labelDotRadius: 0.3, labelResolution: 2,
+    labelColor: (d) => d.color, labelSize: 0.85, labelDotRadius: 0.28, labelResolution: 2,
   };
-  for (const k in cfg) {
-    try { if (typeof globe[k] === "function") globe[k](cfg[k]); } catch (e) {}
-  }
-
-  // dark-teal base so a missing texture still reads as a planet, not a void
+  for (const k in cfg) { try { if (typeof globe[k] === "function") globe[k](cfg[k]); } catch (e) {} }
   try {
-    const mat = globe.globeMaterial();
-    mat.color = new THREE.Color("#0a1a16");
-    mat.emissive = new THREE.Color("#02140e");
-    mat.emissiveIntensity = 0.4;
+    const m = globe.globeMaterial();
+    m.color = new THREE.Color("#0a1a16");
+    m.emissive = new THREE.Color("#02140e"); m.emissiveIntensity = 0.4;
+  } catch (e) {}
+  try {
+    globe.controls().autoRotate = !REDUCED;
+    globe.controls().autoRotateSpeed = 0.5;
   } catch (e) {}
 
-  globe.controls().autoRotate = true;
-  globe.controls().autoRotateSpeed = 0.55;
-  globe.controls().enableZoom = true;
-
-  // The #1 reason the globe "rarely showed": it initialised before the flex
-  // panel had a size, rendering 0x0. Size it now, again after a tick, and on
-  // every container resize.
-  const fit = () => {
-    if (el.clientWidth && el.clientHeight)
-      globe.width(el.clientWidth).height(el.clientHeight);
-  };
-  fit();
-  setTimeout(fit, 80);
-  setTimeout(() => { fit(); flyHome(); }, 400);
+  const fit = () => { if (el.clientWidth && el.clientHeight) globe.width(el.clientWidth).height(el.clientHeight); };
+  fit(); setTimeout(fit, 80); setTimeout(() => { fit(); flyHome(); }, 400);
   if (window.ResizeObserver) new ResizeObserver(fit).observe(el);
   window.addEventListener("resize", fit);
-
   setHomeMarker();
 }
 
-function clearGeo() {
-  state.arcs = []; state.rings = [];
-  if (globe) { globe.arcsData([]); globe.ringsData([]); }
-}
-
 function flyHome() {
-  if (globe && !flewHome) {
-    globe.pointOfView({ lat: home.lat, lng: home.lon, altitude: 2.3 }, 1200);
-    flewHome = true;
-  }
+  if (globe && !flewHome) { globe.pointOfView({ lat: home.lat, lng: home.lon, altitude: 2.3 }, 1200); flewHome = true; }
 }
+function clearGeo() { state.arcs = []; state.rings = []; if (globe) { globe.arcsData([]); globe.ringsData([]); } }
 
 function setHomeMarker() {
   if (!globe) return;
   state.points = state.points.filter((p) => !p.home);
-  state.points.push({ lat: home.lat, lng: home.lon, color: "#00ff95", r: 0.9, home: true });
+  state.points.unshift({ lat: home.lat, lng: home.lon, color: "#00ff95", r: 0.95, home: true });
   state.labels = state.labels.filter((l) => !l.home);
-  state.labels.push({ lat: home.lat, lng: home.lon, text: home.label || "AP",
-                      color: "#00ff95", home: true });
+  state.labels.unshift({ lat: home.lat, lng: home.lon, text: home.label || "AP", color: "#00ff95", home: true });
   globe.pointsData(state.points.slice()).labelsData(state.labels.slice());
 }
 
 function pushGeo(ev) {
   if (!globe || ev.lat == null) return;
   const color = CAT_COLOR[ev.category] || CAT_COLOR.other;
-  state.arcs.push({ startLat: home.lat, startLng: home.lon,
-                    endLat: ev.lat, endLng: ev.lon, color });
+  state.arcs.push({ startLat: home.lat, startLng: home.lon, endLat: ev.lat, endLng: ev.lon, color });
   if (state.arcs.length > 36) state.arcs.shift();
   globe.arcsData(state.arcs.slice());
-
   state.rings.push({ lat: ev.lat, lng: ev.lon, color });
-  if (state.rings.length > 28) state.rings.shift();
+  if (state.rings.length > 26) state.rings.shift();
   globe.ringsData(state.rings.slice());
-
-  // one persistent dot + label per destination location
   const key = ev.lat.toFixed(1) + "," + ev.lon.toFixed(1);
   if (!state.points.some((p) => !p.home && p.key === key)) {
     state.points.push({ lat: ev.lat, lng: ev.lon, color, r: 0.45, key });
     const txt = ev.city || ev.country || "";
-    if (txt) state.labels.push({ lat: ev.lat, lng: ev.lon, text: txt,
-                                 color: "#cfe3ff", key });
+    if (txt) state.labels.push({ lat: ev.lat, lng: ev.lon, text: txt, color: "#cfe3ff", key });
     if (state.points.length > 80) state.points.splice(1, 1);
     if (state.labels.length > 60) state.labels.splice(1, 1);
     globe.pointsData(state.points.slice()).labelsData(state.labels.slice());
   }
 }
 
-// --- Feed -------------------------------------------------------------------
-function pushFeed(ev) {
-  const list = document.getElementById("feed-list");
-  const row = document.createElement("div");
-  row.className = "row " + ev.category;
-  const cc = ev.country ? `${ev.country}${ev.city ? " · " + ev.city : ""}` : "";
-  row.innerHTML = `<span class="t">${ev.ts}</span><span class="k">${ev.kind}</span>` +
-    `<span class="d">${ev.domain}</span><span class="cc">${cc}</span>`;
-  list.insertBefore(row, list.firstChild);
-  while (list.childElementCount > 120) list.removeChild(list.lastChild);
+// ---- Live metadata table (deduped, with hit counts) ----
+function upsertMeta(ev) {
+  const key = `${ev.src}|${ev.kind}|${ev.domain}`;
+  let m = state.meta.get(key);
+  if (m) { m.hits++; m.ts = ev.ts; m.lastMs = Date.now(); }
+  else {
+    m = { ip: ev.src, kind: ev.kind, domain: ev.domain, cat: ev.category,
+          hits: 1, ts: ev.ts, lastMs: Date.now(),
+          loc: ev.country ? ev.country : "" };
+    state.meta.set(key, m);
+  }
+  renderMeta();
 }
 
-// --- Devices ----------------------------------------------------------------
+function renderMeta() {
+  const wrap = document.getElementById("meta-rows");
+  let rows = [...state.meta.values()];
+  if (state.selected) rows = rows.filter((r) => r.ip === state.selected);
+  rows.sort((a, b) => b.lastMs - a.lastMs);
+  rows = rows.slice(0, 80);
+  if (!rows.length) { wrap.innerHTML = '<div class="empty">No metadata yet.</div>'; return; }
+  wrap.innerHTML = rows.map((r) =>
+    `<div class="row ${r.cat}"><span class="t">${r.ts}</span>` +
+    `<span class="k">${r.kind}</span><span class="cat">${r.cat}</span>` +
+    `<span class="hits">${r.hits}</span>` +
+    `<span class="dom" title="${r.domain}">${r.domain}</span>` +
+    `<span class="loc">${r.loc}</span></div>`).join("");
+}
+
+// ---- Devices ----
 function updateDevice(ev) {
   if (!ev.src || ev.src === "?") return;
   let d = state.devices.get(ev.src);
-  if (!d) {
-    d = { os: "", apps: new Set(), logins: new Set(), domains: new Set() };
-    state.devices.set(ev.src, d);
-  }
+  if (!d) { d = { os: "", apps: new Set(), logins: new Set(), domains: new Set() }; state.devices.set(ev.src, d); }
   if (!d.os && ev.os) d.os = ev.os;
   (ev.apps || []).forEach((a) => d.apps.add(a));
   d.domains.add(ev.domain);
@@ -152,25 +137,34 @@ function updateDevice(ev) {
 
 function renderDevices() {
   const wrap = document.getElementById("device-list");
-  wrap.innerHTML = "";
-  if (!state.devices.size) {
-    wrap.innerHTML = '<div class="empty">No devices observed yet.</div>';
-    return;
-  }
+  if (!state.devices.size) { wrap.innerHTML = '<div class="empty">No devices observed yet.</div>'; return; }
   const now = Date.now();
+  wrap.innerHTML = "";
   for (const [ip, d] of state.devices) {
     const stale = !state.online || (now - (d.lastMs || 0) > STALE_MS);
     const el = document.createElement("div");
-    el.className = "device" + (stale ? " stale" : "");
+    el.className = "device" + (stale ? " stale" : "") + (state.selected === ip ? " sel" : "");
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
     const apps = [...d.apps].map((a) => `<span class="tag">${a}</span>`).join("");
-    const logins = [...d.logins].map((l) => `<span class="tag login">⚷ ${l}</span>`).join("");
+    const logins = [...d.logins].map((l) => `<span class="tag login">↪ ${l}</span>`).join("");
     el.innerHTML =
-      `<div class="d-top"><span class="ip">${ip}</span>` +
-      `<span class="os">${d.os || "unknown OS"}</span></div>` +
+      `<div class="d-top"><span class="ip">${ip}</span><span class="os">${d.os || "unknown OS"}</span></div>` +
       `<div class="apps">${apps || '<span class="os">no apps yet</span>'}${logins}</div>` +
       `<div class="meta">${d.domains.size} domains · last ${d.last || "—"}</div>`;
+    const toggle = () => selectDevice(state.selected === ip ? null : ip);
+    el.addEventListener("click", toggle);
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
     wrap.appendChild(el);
   }
+}
+
+function selectDevice(ip) {
+  state.selected = ip;
+  const tag = document.getElementById("filter-tag");
+  if (ip) { tag.hidden = false; tag.textContent = "▼ " + ip + "  ✕"; tag.onclick = () => selectDevice(null); }
+  else { tag.hidden = true; }
+  renderDevices(); renderMeta();
 }
 
 function updateStats() {
@@ -180,54 +174,42 @@ function updateStats() {
   document.getElementById("s-countries").textContent = state.countries.size;
 }
 
-// --- Mode badge -------------------------------------------------------------
+// ---- Mode badge ----
 function applyMode(mode, msg) {
   const badge = document.getElementById("mode-badge");
-  const mmsg = document.getElementById("mode-msg");
-  const map = {
-    live: ["LIVE", "live"], demo: ["DEMO", "demo"],
-    replay: ["REPLAY", "demo"], error: ["CAPTURE ERROR", "error"],
-    offline: ["OFFLINE", "off"], starting: ["CONNECTING", "off"],
-  };
+  const map = { live: ["LIVE", "live"], demo: ["DEMO", "demo"], replay: ["REPLAY", "demo"],
+    error: ["CAPTURE ERROR", "error"], offline: ["OFFLINE", "off"], starting: ["CONNECTING", "off"] };
   const [text, cls] = map[mode] || ["?", "off"];
-  badge.textContent = "● " + text;
-  badge.className = "mode " + cls;
-  mmsg.textContent = msg || "";
+  badge.textContent = "● " + text; badge.className = "mode " + cls;
+  document.getElementById("mode-msg").textContent = msg || "";
   const hint = document.getElementById("dev-hint");
-  if (mode === "demo") hint.textContent = "(synthetic)";
-  else if (mode === "error" || mode === "offline") hint.textContent = "(stale)";
-  else hint.textContent = "";
+  hint.textContent = mode === "demo" ? "(synthetic)" : (mode === "error" || mode === "offline") ? "(stale)" : "";
   state.online = (mode === "live" || mode === "replay" || mode === "demo");
 }
 
-// --- Event handling ---------------------------------------------------------
+// ---- Events ----
 function handle(ev) {
   if (ev._meta) {
     if (ev.home) { home = ev.home; setHomeMarker(); flyHome(); }
     applyMode(ev.mode, ev.msg);
-    // On a capture error, don't keep animating stale "live" arcs/devices —
-    // show a clean stopped state so the dashboard never implies false activity.
     if (ev.mode === "error") { state.devices.clear(); renderDevices(); clearGeo(); }
     return;
   }
   state.domains.add(ev.domain);
   if (ev.country) state.countries.add(ev.country);
   if (ev.category === "auth") state.authCount++;
-  pushGeo(ev); pushFeed(ev); updateDevice(ev); updateStats();
+  pushGeo(ev); upsertMeta(ev); updateDevice(ev); updateStats();
 }
 
-// --- SSE --------------------------------------------------------------------
 function connect() {
   const es = new EventSource("/stream");
   es.onmessage = (m) => { try { handle(JSON.parse(m.data)); } catch (e) {} };
   es.onerror = () => { applyMode("offline", "server unreachable"); renderDevices(); };
 }
 
-// --- Clock + staleness sweep ------------------------------------------------
 setInterval(() => {
   document.getElementById("clock").textContent = new Date().toTimeString().slice(0, 8);
   if (state.devices.size) renderDevices();
 }, 1000);
 
-// --- Boot -------------------------------------------------------------------
 window._loadGlobe(function () { initGlobe(); connect(); });
