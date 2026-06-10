@@ -1,17 +1,16 @@
 # MITM Lab Controller + Monitor
 
-A Tkinter **controller** for running an Evil Twin access point on Linux, paired
-with a web **Monitor** — a passive traffic-analysis console. The controller
-wires together `hostapd`, `dhcpd`, and `iptables` to stand up a fake Wi-Fi AP,
-lease addresses to clients, and NAT their traffic upstream. Because the AP is
-the gateway, it sees every client's traffic; the Monitor turns that into a live,
-multi-view picture (flows, devices, DNS, TLS, HTTP, packets, a geo globe). It is
-for learning and explaining man-in-the-middle attacks on networks you own.
+Two tools for studying man-in-the-middle attacks on networks you own. A Tkinter
+**controller** runs an Evil Twin access point on Linux: it wires `hostapd`,
+`dhcpd`, and `iptables` into a fake Wi-Fi AP, leases addresses to clients, and
+NATs their traffic upstream. A web **Monitor** reads the result. The AP is the
+gateway, so it sees every client's traffic, and the Monitor shows that traffic
+live across flows, devices, DNS, TLS, HTTP, packets, and a geo globe.
 
-> **Honest by design:** the Monitor only labels what it actually observes. A
-> flow is named from a real DNS answer / TLS SNI / HTTP Host (or a reverse-DNS /
-> rdap owner lookup); anything it can't trace stays a raw IP, uncategorised and
-> un-highlighted. There is no synthetic/demo data anywhere.
+> **No fabricated data.** The Monitor names a flow only from something it saw: a
+> DNS answer, a TLS SNI, an HTTP Host, or a reverse-DNS / rdap owner lookup. A
+> flow it can't trace stays a raw IP with no category and no highlight. No
+> synthetic data, no demo feed.
 
 ---
 
@@ -27,12 +26,12 @@ cd mitm-lab-controller
 ./run.sh       # launches the controller (handles sudo + X11 for you)
 ```
 
-Then in the app: fill in your interfaces → **Start AP** → connect a device →
-**📊 Open Monitor**. That's it. `setup.sh` is safe to re-run and installs the
-system packages, the Python GeoIP reader, the offline 3D-globe library, and the
-GeoIP database, then grants capture rights.
+In the app: set your interfaces, hit **Start AP**, connect a device, then click
+**📊 Open Monitor**. `setup.sh` is safe to re-run; it installs the system
+packages, the Python GeoIP reader, the offline 3D-globe library, and the GeoIP
+database, then grants capture rights.
 
-Want to explore without a radio? Replay any real pcap:
+To explore without a radio, replay a real pcap:
 
 ```bash
 python3 ops_server.py --pcap /path/to/capture.pcap   # then open http://127.0.0.1:8777/
@@ -257,35 +256,32 @@ hardware.
   browser.
 - Clear Log wipes the console and the on-disk log.
 
-The Tkinter app is now purely the **controller**: stand up the AP, watch
-clients, launch tools. All traffic analysis lives in the web Monitor.
+The Tkinter app is the **controller**: stand up the AP, watch clients, launch
+tools. Traffic analysis lives in the web Monitor.
 
 ---
 
-## Monitor — the web analyst console
+## Monitor: the web analyst console
 
-`ops_server.py` is a separate web console fed by a live capture on the AP
-interface (which, as the gateway, sees every client's traffic). The Tkinter app
-stays the control panel; the Monitor is where I actually analyse what I
-intercept. It is split into a small `engine/` package:
+`ops_server.py` serves the web console from a live capture on the AP interface.
+The Tkinter app stays the control panel; the Monitor is where I read what I
+intercept. The code sits in a small `engine/` package:
 
-- **capture** — streams `tshark -T ek` into normalised packets (live or
-  real-pcap replay); a `dumpcap` ring-buffer records to `monitor.pcapng` for
-  export and deep inspection.
-- **state** — builds the live picture: flow/conversation table, per-device
-  bandwidth, protocol stats, a packet ring, alerts, and the **correlation
-  engine** — an `IP → host` map learned from observed DNS answers and TLS SNI,
-  so a raw HTTPS flow to a bare IP gets truthfully labelled with the name the
-  device actually resolved.
-- **enrich** — for destinations we still couldn't name, a background worker
-  adds offline GeoIP coordinates plus a reverse-DNS (PTR) and rdap/ASN owner
-  lookup. Genuinely unknown IPs are left bare — nothing is invented.
-- **server** — stdlib HTTP + Server-Sent Events; deltas stream at ~2 Hz.
+- **capture** streams `tshark -T ek` into normalised packets (live or real-pcap
+  replay); a `dumpcap` ring buffer records to `monitor.pcapng` for export and
+  deep inspection.
+- **state** builds the live picture: a flow table, per-device bandwidth,
+  protocol stats, a packet ring, alerts, and the **correlation engine**. That
+  engine keeps an `IP → host` map learned from observed DNS answers and TLS SNI,
+  so a raw HTTPS flow to a bare IP gets the name the device resolved.
+- **enrich** runs a background worker on the destinations we still couldn't
+  name: offline GeoIP coordinates, a reverse-DNS (PTR) lookup, and an rdap/ASN
+  owner lookup. IPs it can't identify stay bare.
+- **server** is stdlib HTTP plus Server-Sent Events; deltas stream at about 2 Hz.
 
-**There is no demo feed.** With `--iface` it captures live and reports an
-explicit `CAPTURE ERROR` in the UI if it can't; with `--pcap` it replays real
-captured packets. If a flow can't be traced to a name, it stays a raw IP and is
-never colour-highlighted or categorised.
+**No demo feed.** With `--iface` it captures live and shows `CAPTURE ERROR` in
+the UI if it can't; with `--pcap` it replays captured packets. A flow it can't
+name stays a raw IP, with no highlight and no category.
 
 ### Views (left rail)
 
@@ -316,8 +312,8 @@ python3 ops_server.py --iface wlan0 --subnet 192.168.50.0/24 --ap-ip 192.168.50.
 python3 ops_server.py --pcap /tmp/lab_ap_gui/monitor.pcapng   # replay a real capture
 ```
 
-Then open `http://127.0.0.1:8777/`. The AP marker on the globe is geolocated
-from the host's own public IP automatically.
+Then open `http://127.0.0.1:8777/`. The globe's AP marker comes from the host's
+own public IP.
 
 ---
 
