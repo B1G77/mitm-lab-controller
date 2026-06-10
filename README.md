@@ -1,10 +1,42 @@
-# MITM Lab Controller
+# MITM Lab Controller + Monitor
 
-I built a single-file Tkinter front-end for running an Evil Twin access point on
-Linux. It wires together `hostapd`, `dhcpd`, and `iptables` to stand up a fake
-Wi-Fi AP, lease addresses to clients, and route their traffic upstream through
-NAT so I can capture and study it. I use it to learn how man-in-the-middle
-attacks actually work and to explain them.
+A Tkinter **controller** for running an Evil Twin access point on Linux, paired
+with a web **Monitor** — a passive traffic-analysis console. The controller
+wires together `hostapd`, `dhcpd`, and `iptables` to stand up a fake Wi-Fi AP,
+lease addresses to clients, and NAT their traffic upstream. Because the AP is
+the gateway, it sees every client's traffic; the Monitor turns that into a live,
+multi-view picture (flows, devices, DNS, TLS, HTTP, packets, a geo globe). It is
+for learning and explaining man-in-the-middle attacks on networks you own.
+
+> **Honest by design:** the Monitor only labels what it actually observes. A
+> flow is named from a real DNS answer / TLS SNI / HTTP Host (or a reverse-DNS /
+> rdap owner lookup); anything it can't trace stays a raw IP, uncategorised and
+> un-highlighted. There is no synthetic/demo data anywhere.
+
+---
+
+## Quick start
+
+Linux only (Kali/Debian), on bare metal or a VM with a **real** AP-capable Wi-Fi
+adapter passed through (the radio cannot be virtual).
+
+```bash
+git clone https://github.com/B1G77/mitm-lab-controller.git
+cd mitm-lab-controller
+./setup.sh     # auto-elevates with sudo; installs ALL deps + globe + GeoIP DB
+./run.sh       # launches the controller (handles sudo + X11 for you)
+```
+
+Then in the app: fill in your interfaces → **Start AP** → connect a device →
+**📊 Open Monitor**. That's it. `setup.sh` is safe to re-run and installs the
+system packages, the Python GeoIP reader, the offline 3D-globe library, and the
+GeoIP database, then grants capture rights.
+
+Want to explore without a radio? Replay any real pcap:
+
+```bash
+python3 ops_server.py --pcap /path/to/capture.pcap   # then open http://127.0.0.1:8777/
+```
 
 ---
 
@@ -57,13 +89,19 @@ hostapd. The AP stays up now.
 
 ### Dependencies
 
+`./setup.sh` installs everything below for you. To do it by hand instead:
+
 ```bash
 sudo apt update
-sudo apt install -y hostapd isc-dhcp-server iw iptables python3-tk
+sudo apt install -y hostapd isc-dhcp-server iw iptables python3-tk \
+                    wireshark-common tshark tcpdump curl
+pip3 install -r requirements.txt --break-system-packages
 ```
 
-The MITM Tools buttons also want `wireshark`, `tcpdump`, `bettercap`, and the
-`qterminal` terminal emulator.
+The MITM Tools buttons also want `bettercap` and the `qterminal` terminal
+emulator. The web **Monitor** needs `tshark` and `dumpcap` (both ship with
+Wireshark) for live capture and recording, and the offline globe + GeoIP assets
+(`bash web/fetch_libs.sh` and `bash download_geoip.sh`).
 
 ---
 
@@ -215,51 +253,71 @@ hardware.
 - TCPDump opens a terminal that writes to `/tmp/lab_ap_gui/lab_capture.pcap`.
 - Bettercap (ARP) starts an ARP-spoof and sniff session against the subnet I
   configured.
-- Ops Dashboard launches the web command center (see below) and opens it in a
+- Open Monitor launches the web analyst console (see below) and opens it in a
   browser.
 - Clear Log wipes the console and the on-disk log.
 
-### Intelligence tab
-
-A second tab captures metadata on the AP interface with pyshark and surfaces it
-live. Modern traffic is HTTPS, so I monitor behaviour, not content: which hosts
-each device contacts (DNS + TLS SNI), color-coded by category (auth, tracking,
-media, cdn). A Device Profiles panel infers each device's OS and apps from the
-hostnames it reaches and flags login events. Needs `tshark` and `pyshark`.
+The Tkinter app is now purely the **controller**: stand up the AP, watch
+clients, launch tools. All traffic analysis lives in the web Monitor.
 
 ---
 
-## Ops Dashboard (the showcase view)
+## Monitor — the web analyst console
 
-`ops_server.py` is a separate, futuristic web command center fed by the same
-metadata. The Tkinter app stays the control panel; the dashboard is the screen
-I present. A small stdlib HTTP server captures (or replays) traffic, enriches
-each destination IP with offline GeoIP, and streams events to the browser over
-Server-Sent Events. The page renders a rotating 3D globe (globe.gl) with a
-glowing arc from the rogue AP to every destination's real location, a neon
-packet feed, live device cards, and counters.
+`ops_server.py` is a separate web console fed by a live capture on the AP
+interface (which, as the gateway, sees every client's traffic). The Tkinter app
+stays the control panel; the Monitor is where I actually analyse what I
+intercept. It is split into a small `engine/` package:
 
-### One-time setup
+- **capture** — streams `tshark -T ek` into normalised packets (live or
+  real-pcap replay); a `dumpcap` ring-buffer records to `monitor.pcapng` for
+  export and deep inspection.
+- **state** — builds the live picture: flow/conversation table, per-device
+  bandwidth, protocol stats, a packet ring, alerts, and the **correlation
+  engine** — an `IP → host` map learned from observed DNS answers and TLS SNI,
+  so a raw HTTPS flow to a bare IP gets truthfully labelled with the name the
+  device actually resolved.
+- **enrich** — for destinations we still couldn't name, a background worker
+  adds offline GeoIP coordinates plus a reverse-DNS (PTR) and rdap/ASN owner
+  lookup. Genuinely unknown IPs are left bare — nothing is invented.
+- **server** — stdlib HTTP + Server-Sent Events; deltas stream at ~2 Hz.
 
-```bash
-pip install pyshark geoip2 --break-system-packages   # capture + GeoIP
-bash web/fetch_libs.sh        # bundle the globe library locally (offline-safe)
-bash download_geoip.sh        # free DB-IP City Lite database, no account
-```
+**There is no demo feed.** With `--iface` it captures live and reports an
+explicit `CAPTURE ERROR` in the UI if it can't; with `--pcap` it replays real
+captured packets. If a flow can't be traced to a name, it stays a raw IP and is
+never colour-highlighted or categorised.
+
+### Views (left rail)
+
+| View | Shows |
+|---|---|
+| Overview | throughput, protocol donut, category mix, top talkers, alerts |
+| Flows | every conversation: client → server, proto, bytes ↑↓, packets, duration |
+| Devices | per-device cards: MAC, inferred OS/apps, logins, bandwidth sparkline |
+| DNS | resolved hosts → addresses, how each was learned (dns/sni/http/ptr/rdap) |
+| TLS | JA3/JA4 client fingerprints per device + named SNI connections |
+| HTTP | cleartext requests the AP can read, with credential/cookie flags |
+| Packets | recent-frame ring; click a row for full dissection + hex dump |
+| Geo | 3D globe with a glowing arc from the AP to every geolocated destination |
+
+Export buttons (top right) download the current flows as CSV or the recorded
+pcap.
+
+### Setup
+
+`./setup.sh` already handled all of this (tshark/dumpcap, the GeoIP reader, the
+offline globe library, the GeoIP database, and capture privileges). When the
+controller launches the Monitor it runs as root, so capture just works.
 
 ### Run it
 
 ```bash
-python3 ops_server.py --iface wlan0     # live, alongside a running AP
-python3 ops_server.py --pcap /tmp/lab_ap_gui/bettercap_sniff.pcap   # replay
-python3 ops_server.py --demo            # synthetic feed, zero setup
+python3 ops_server.py --iface wlan0 --subnet 192.168.50.0/24 --ap-ip 192.168.50.1
+python3 ops_server.py --pcap /tmp/lab_ap_gui/monitor.pcapng   # replay a real capture
 ```
 
-Then open `http://127.0.0.1:8777/`. If pyshark or tshark are missing, the
-server falls back to the demo feed automatically, so the dashboard always shows
-activity — useful when live devices are quiet during a presentation. The arc
-origin (the "home" point) is the `HOME` constant near the top of
-`ops_server.py`; change its lat/lon to your location.
+Then open `http://127.0.0.1:8777/`. The AP marker on the globe is geolocated
+from the host's own public IP automatically.
 
 ---
 
@@ -286,4 +344,6 @@ Everything sits under `/tmp/lab_ap_gui/`:
 - `dhcpd.leases`: active leases
 - `lab_ap.log`: full activity log, tailed by the GUI
 - `lab_capture.pcap`: TCPDump output
+- `monitor.pcapng`: Monitor's `dumpcap` ring-buffer recording (export + deep inspect)
+- `ops_server.log`: Monitor engine log
 - `pids/`: daemon PID files for clean shutdown

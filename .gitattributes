@@ -1,0 +1,19 @@
+# This project runs on Linux. Force LF endings so shell scripts and Python work
+# correctly when cloned, regardless of the OS that committed them (a CRLF in a
+# .sh shebang breaks bash with "bad interpreter: /bin/bash^M").
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.py   text eol=lf
+*.js   text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+*.md   text eol=lf
+
+# Binary assets — never touch line endings.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.mmdb binary
+*.pcap binary
+*.pcapng binary

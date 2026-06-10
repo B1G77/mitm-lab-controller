@@ -1,0 +1,4 @@
+# Python dependencies for the MITM Lab Controller + Monitor.
+# Capture itself uses the system tshark/dumpcap (installed by setup.sh), so the
+# only Python package needed is the offline GeoIP reader.
+geoip2>=4.0

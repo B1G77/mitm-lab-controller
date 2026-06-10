@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MITM // OPERATIONS</title>
+<title>MITM // MONITOR</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -13,54 +13,53 @@
   <div class="brand">
     <span class="logo" aria-hidden="true">◢◤</span>
     <div class="brand-text">
-      <span class="title">MITM<span class="dim">//</span>OPERATIONS</span>
-      <span class="sub">passive metadata intelligence</span>
+      <span class="title">MITM<span class="dim">//</span>MONITOR</span>
+      <span class="sub">passive traffic analysis console</span>
     </div>
   </div>
 
   <div class="stats" id="stats">
     <div class="chip"><b id="s-devices">0</b><span>devices</span></div>
+    <div class="chip"><b id="s-flows">0</b><span>flows</span></div>
+    <div class="chip"><b id="s-rate">0</b><span>throughput</span></div>
     <div class="chip"><b id="s-domains">0</b><span>domains</span></div>
-    <div class="chip alert"><b id="s-auth">0</b><span>logins</span></div>
-    <div class="chip"><b id="s-countries">0</b><span>countries</span></div>
+    <div class="chip alert"><b id="s-alerts">0</b><span>alerts</span></div>
   </div>
 
   <div class="status">
     <span class="mode off" id="mode-badge">● CONNECTING</span>
     <span class="mode-msg" id="mode-msg"></span>
     <span class="clock" id="clock">00:00:00</span>
+    <div class="exports">
+      <a href="/api/export/flows.csv" title="Download flows as CSV">⭳ CSV</a>
+      <a href="/api/export/pcap" title="Download recorded pcap">⭳ PCAP</a>
+    </div>
   </div>
 </header>
 
-<main>
-  <section class="globe-panel glass">
-    <div class="panel-label">LIVE GEO-INTELLIGENCE
-      <span class="legend" id="legend">
-        <i class="auth"></i>auth <i class="tracking"></i>tracking
-        <i class="media"></i>media <i class="cdn"></i>cdn <i class="other"></i>other
-      </span>
-    </div>
-    <div id="globe"></div>
-  </section>
+<div class="app">
+  <nav class="rail" id="rail">
+    <button data-view="overview" class="active"><i>▦</i><span>Overview</span></button>
+    <button data-view="flows"><i>⇄</i><span>Flows</span></button>
+    <button data-view="devices"><i>▤</i><span>Devices</span></button>
+    <button data-view="dns"><i>◌</i><span>DNS</span></button>
+    <button data-view="tls"><i>⚿</i><span>TLS</span></button>
+    <button data-view="http"><i>⚠</i><span>HTTP</span></button>
+    <button data-view="packets"><i>≣</i><span>Packets</span></button>
+    <button data-view="geo"><i>◐</i><span>Geo</span></button>
+    <div class="rail-spacer"></div>
+    <div class="rail-foot"><span id="sel-foot"></span></div>
+  </nav>
+  <main id="view"></main>
+</div>
 
-  <aside class="side">
-    <section class="devices glass">
-      <div class="panel-label">DEVICES <span class="hint" id="dev-hint"></span></div>
-      <div id="device-list"></div>
-    </section>
-
-    <section class="feed glass">
-      <div class="panel-label">LIVE METADATA
-        <span class="filter" id="filter-tag" hidden></span>
-      </div>
-      <div class="table-head">
-        <span>Time</span><span>Type</span><span>Cat</span>
-        <span class="num">Hits</span><span class="grow">Domain</span><span>Loc</span>
-      </div>
-      <div id="meta-rows"></div>
-    </section>
-  </aside>
-</main>
+<div id="modal" class="modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><span id="modal-title">Packet</span>
+      <button id="modal-close" aria-label="Close">✕</button></div>
+    <div id="modal-body"></div>
+  </div>
+</div>
 
 <script>
   // globe.gl bundles three.js. Local first (offline-safe), CDN fallback.
@@ -77,6 +76,9 @@
     document.body.appendChild(s);
   };
 </script>
+<script src="charts.js"></script>
+<script src="globe.js"></script>
+<script src="views.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -322,9 +322,10 @@ class LabManager:
         self.log(f"Bettercap packets saving to {sniff_out}")
 
     def open_ops_dashboard(self, iface: str, ap_ip: str, cidr: str) -> None:
-        # Launch the web Ops Dashboard server and open it in a browser. ops_server
-        # auto-falls back to its demo feed if pyshark/tshark aren't available.
-        # Pass the subnet + AP IP so the server captures only client traffic.
+        # Launch the web Monitor (analyst console) and open it in a browser.
+        # It captures LIVE on the AP interface with tshark — there is no demo
+        # feed; if capture can't start it reports an explicit error in the UI.
+        # Pass the subnet + AP IP so the engine scopes traffic to clients only.
         server = Path(__file__).resolve().parent / "ops_server.py"
         if not server.exists():
             raise CommandError("ops_server.py not found next to mitm_lab.py")
@@ -342,17 +343,21 @@ class LabManager:
                 break
             except FileNotFoundError:
                 continue
-        self.log("Launched Ops Dashboard → http://127.0.0.1:8777/")
+        self.log("Launched Monitor → http://127.0.0.1:8777/")
 
     def stop_ops_dashboard(self) -> None:
         if self.ops_proc and self.ops_proc.poll() is None:
             try:
-                self.ops_proc.terminate()
+                self.ops_proc.terminate()   # SIGTERM lets it reap tshark/dumpcap
             except Exception:
                 pass
         self.ops_proc = None
-        # Belt-and-suspenders: kill any ops_server started this or a prior run.
-        self.run(["pkill", "-9", "-f", "ops_server.py"], check=False, quiet=True)
+        time.sleep(0.4)
+        # Belt-and-suspenders, all SIGTERM so the server's own cleanup runs:
+        # kill any monitor from this or a prior session, plus its pcap recorder
+        # (scoped to our unique recording file so a user's Wireshark is untouched).
+        self.run(["pkill", "-f", "ops_server.py"], check=False, quiet=True)
+        self.run(["pkill", "-f", "monitor.pcapng"], check=False, quiet=True)
 
 
 class LabGUI:
@@ -510,7 +515,7 @@ class LabGUI:
                                                 self.vars["ap_iface"].get(),
                                                 self.vars["ap_ip"].get(),
                                                 self.vars["cidr"].get())).pack(side="left", padx=4)
-        ttk.Button(tools, text="🌐 Ops Dashboard", style="Go.TButton",
+        ttk.Button(tools, text="📊 Open Monitor", style="Go.TButton",
                    command=lambda: self._launch(self.manager.open_ops_dashboard,
                                                 self.vars["ap_iface"].get(),
                                                 self.vars["ap_ip"].get(),
