@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MITM Monitor — entrypoint for the passive analyst console.
+"""MITM Monitor: entrypoint for the passive analyst console.
 
 Thin launcher around the `engine` package. Captures live on an interface (the
 rogue AP's, so it sees every client's traffic) or replays a real pcap, builds a

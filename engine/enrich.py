@@ -1,9 +1,9 @@
 """Enrichment: turn bare destination IPs into truthful labels + coordinates.
 
 Three real, external-but-passive lookups, all cached and rate-limited:
-  * GeoIP   — offline DB-IP/GeoLite2 .mmdb (lat/lon/city/country)
-  * PTR     — reverse DNS (the host's own claimed name)
-  * rdap    — IP registry owner/ASN org (e.g. "Cloudflare, Inc.")
+  * GeoIP:  offline DB-IP/GeoLite2 .mmdb (lat/lon/city/country)
+  * PTR:    reverse DNS (the host's own claimed name)
+  * rdap:   IP registry owner/ASN org (e.g. "Cloudflare, Inc.")
 
 These only ever run for IPs we could NOT name from observed DNS/SNI/HTTP, so a
 flow is labelled from the strongest real evidence available and genuinely

@@ -9,7 +9,7 @@ Endpoints:
   GET /api/export/pcap      -> newest recorded pcap (download)
 
 Capture is live-or-replay only; there is no synthetic feed. On capture failure
-the mode becomes "error" and the UI says so — it never shows fake activity.
+the mode becomes "error" and the UI says so; it never shows fake activity.
 """
 
 from __future__ import annotations

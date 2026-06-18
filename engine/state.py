@@ -1,4 +1,4 @@
-"""MonitorState — the live picture built from observed packets.
+"""MonitorState: the live picture built from observed packets.
 
 Owns flows, devices, the IP->name correlation map, bandwidth time-series,
 protocol stats, alerts and a recent-packet ring. Thread-safe: the capture
@@ -422,7 +422,7 @@ class MonitorState:
             return out
 
     def unnamed_dsts(self) -> list[str]:
-        """Server IPs that have flows but no name yet — feed the enricher."""
+        """Server IPs that have flows but no name yet, to feed the enricher."""
         with self.lock:
             out = []
             for f in self.flows.values():

@@ -1,6 +1,6 @@
 "use strict";
 // Geo view: a 3D globe with a glowing arc from the rogue AP to every
-// destination we could geolocate. Only real, geolocated destinations appear —
+// destination we could geolocate. Only real, geolocated destinations appear;
 // un-geolocated flows simply have no point. globe.gl is optional; if it never
 // loads, the view shows a friendly message and the rest of the console works.
 

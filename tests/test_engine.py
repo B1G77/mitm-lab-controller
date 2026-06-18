@@ -1,4 +1,4 @@
-"""Pure-logic tests for the monitor engine — run anywhere, no tshark needed.
+"""Pure-logic tests for the monitor engine. Run anywhere, no tshark needed.
 
     python -m pytest tests/         # or:  python tests/test_engine.py
 """

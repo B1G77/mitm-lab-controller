@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evil Twin / MITM lab controller — educational research tool (Linux/Kali).
+"""Evil Twin / MITM lab controller, an educational research tool (Linux/Kali).
 
 Single-file Tkinter front-end for an `hostapd` + `dhcpd` + `iptables` rogue AP
 lab. Use only on networks and devices you own or are explicitly authorized to
@@ -210,7 +210,7 @@ class LabManager:
         # doesn't hand the radio back to NetworkManager right before we take it.
         self.stop(silent=True, clear_terminal=False, restore_net=False)
 
-        # 1. Prep environment — free ONLY the AP interface, never the whole box.
+        # 1. Prep environment: free ONLY the AP interface, never the whole box.
         #    Earlier this stopped NetworkManager entirely, which also killed
         #    eth0's internet and frequently didn't recover without a reboot, and
         #    let NM re-grab wlan0 between runs ("Device or resource busy"). The
@@ -267,8 +267,8 @@ class LabManager:
         self.run(["ip", "addr", "flush", "dev", iface], check=False)   # drop the AP IP
         if restore_net:
             # Hand the interface back to NetworkManager and turn off forwarding.
-            # NM was never stopped, so eth0's internet was never interrupted —
-            # this just returns wlan0 to normal Wi-Fi. No reboot needed.
+            # NM was never stopped, so eth0's internet was never interrupted.
+            # This just returns wlan0 to normal Wi-Fi. No reboot needed.
             self.run(["sh", "-c", "echo 0 > /proc/sys/net/ipv4/ip_forward"], check=False)
             self.run(["nmcli", "device", "set", iface, "managed", "yes"], check=False)
             self.run(["nmcli", "radio", "wifi", "on"], check=False)
@@ -323,7 +323,7 @@ class LabManager:
 
     def open_ops_dashboard(self, iface: str, ap_ip: str, cidr: str) -> None:
         # Launch the web Monitor (analyst console) and open it in a browser.
-        # It captures LIVE on the AP interface with tshark — there is no demo
+        # It captures LIVE on the AP interface with tshark; there is no demo
         # feed; if capture can't start it reports an explicit error in the UI.
         # Pass the subnet + AP IP so the engine scopes traffic to clients only.
         server = Path(__file__).resolve().parent / "ops_server.py"
